@@ -460,6 +460,13 @@ if input_mode == "📷 ምስል መስቀል (Upload Image — Beta)":
                 except ValueError as e:
                     st.warning(str(e))
                     st.session_state.prefill = None
+                except Exception:
+                    st.error(
+                        "ይህን ምስል በመተንተን ላይ ችግር ተፈጥሯል። እባክዎ የተለየ ምስል ይሞክሩ ወይም "
+                        "ወደ በእጅ ማስገቢያ ይቀይሩ። / Something went wrong analyzing this "
+                        "image — try a different image or switch to Manual Entry."
+                    )
+                    st.session_state.prefill = None
 
 prefill = st.session_state.prefill
 

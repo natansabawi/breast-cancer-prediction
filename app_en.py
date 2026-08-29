@@ -119,6 +119,12 @@ if mode == "📷 Upload Image (Beta)":
                 except ValueError as e:
                     st.warning(str(e))
                     st.session_state.prefill = None
+                except Exception:
+                    st.error(
+                        "Something went wrong analyzing this image. Try a different "
+                        "image, or switch to Manual Entry below."
+                    )
+                    st.session_state.prefill = None
 
 st.divider()
 

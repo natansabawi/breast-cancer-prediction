@@ -127,52 +127,63 @@ def extract_features_from_image(image_bgr, min_nucleus_px=40, max_nucleus_frac=0
     for label_id in np.unique(labels):
         if label_id == 0:
             continue
-        nucleus_mask = (labels == label_id).astype(np.uint8) * 255
-        area_px = float(np.sum(nucleus_mask > 0))
+        try:
+            nucleus_mask = (labels == label_id).astype(np.uint8) * 255
+            area_px = float(np.sum(nucleus_mask > 0))
 
-        if area_px < min_nucleus_px or area_px > max_nucleus_frac * img_area:
-            continue  # too small (noise) or too large (background blob)
+            if area_px < min_nucleus_px or area_px > max_nucleus_frac * img_area:
+                continue  # too small (noise) or too large (background blob)
 
-        contours, _ = cv2.findContours(nucleus_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        if not contours:
-            continue
-        contour = max(contours, key=cv2.contourArea)
-        if len(contour) < 5:
-            continue
+            contours, _ = cv2.findContours(nucleus_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            if not contours:
+                continue
+            contour = max(contours, key=cv2.contourArea)
+            if len(contour) < 5:
+                continue
 
-        perimeter_px = cv2.arcLength(contour, True)
-        radius_px = np.sqrt(area_px / np.pi)
+            perimeter_px = cv2.arcLength(contour, True)
+            radius_px = np.sqrt(area_px / np.pi)
 
-        # Texture: intensity variation inside the nucleus
-        texture_val = float(np.std(gray[nucleus_mask > 0]))
+            # Texture: intensity variation inside the nucleus
+            texture_val = float(np.std(gray[nucleus_mask > 0]))
 
-        # Concavity via convex hull comparison
-        hull = cv2.convexHull(contour)
-        hull_area = cv2.contourArea(hull)
-        concavity_val = max(0.0, (hull_area - cv2.contourArea(contour)) / hull_area) if hull_area > 0 else 0.0
+            # Concavity via convex hull comparison
+            hull = cv2.convexHull(contour)
+            hull_area = cv2.contourArea(hull)
+            concavity_val = max(0.0, (hull_area - cv2.contourArea(contour)) / hull_area) if hull_area > 0 else 0.0
 
-        # Concave points via convexity defects
-        hull_idx = cv2.convexHull(contour, returnPoints=False)
-        n_defects = 0
-        if hull_idx is not None and len(hull_idx) > 3:
+            # Concave points via convexity defects — this OpenCV call is
+            # fragile on some contour shapes, so it gets its own inner
+            # safety net and always falls back to 0 rather than propagating.
+            n_defects = 0
             try:
-                hull_idx_sorted = np.sort(hull_idx.flatten())[:, None]
-                defects = cv2.convexityDefects(contour, hull_idx_sorted)
-                if defects is not None:
-                    defects = np.asarray(defects).reshape(-1, 4)
-                    depth_thresh = 0.02 * radius_px * 256  # scaled depth units used by OpenCV
-                    n_defects = int(np.sum(defects[:, 3] > depth_thresh))
-            except (cv2.error, IndexError, ValueError):
+                hull_idx = cv2.convexHull(contour, returnPoints=False)
+                if hull_idx is not None:
+                    hull_idx_flat = np.unique(hull_idx.flatten())
+                    if len(hull_idx_flat) > 3:
+                        hull_idx_sorted = hull_idx_flat.reshape(-1, 1).astype(np.int32)
+                        defects = cv2.convexityDefects(contour, hull_idx_sorted)
+                        if defects is not None:
+                            defects_arr = np.asarray(defects)
+                            if defects_arr.size % 4 == 0 and defects_arr.size > 0:
+                                defects_arr = defects_arr.reshape(-1, 4)
+                                depth_thresh = 0.02 * radius_px * 256
+                                n_defects = int(np.sum(defects_arr[:, 3] > depth_thresh))
+            except Exception:
                 n_defects = 0
 
-        radii.append(radius_px)
-        textures.append(texture_val)
-        perimeters.append(perimeter_px)
-        areas.append(area_px)
-        concavities.append(concavity_val)
-        concave_pts.append(n_defects)
+            radii.append(radius_px)
+            textures.append(texture_val)
+            perimeters.append(perimeter_px)
+            areas.append(area_px)
+            concavities.append(concavity_val)
+            concave_pts.append(n_defects)
 
-        cv2.drawContours(annotated, [contour], -1, (0, 255, 0), 2)
+            cv2.drawContours(annotated, [contour], -1, (0, 255, 0), 2)
+        except Exception:
+            # Any unexpected failure on a single nucleus should never take
+            # down the whole prediction — just skip that nucleus.
+            continue
 
     n_nuclei = len(radii)
     if n_nuclei < 3:
