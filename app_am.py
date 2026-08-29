@@ -11,12 +11,9 @@ import streamlit as st
 import joblib
 import numpy as np
 import pandas as pd
-import cv2
 import os
 import io
 from datetime import datetime
-
-from image_features import extract_features_from_image
 
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.units import mm
@@ -412,65 +409,6 @@ st.markdown(
 )
 
 # ----------------------------------------------------------------------
-# Input mode selector + image upload (Beta)
-# ----------------------------------------------------------------------
-if "prefill" not in st.session_state:
-    st.session_state.prefill = None
-
-input_mode = st.radio(
-    "የመለኪያ ግቤት ዘዴ / Input method",
-    ["✏️ በእጅ ማስገቢያ (Manual)", "📷 ምስል መስቀል (Upload Image — Beta)"],
-    horizontal=True,
-)
-
-if input_mode == "📷 ምስል መስቀል (Upload Image — Beta)":
-    st.info(
-        "⚠️ **የሙከራ ባህሪ (Experimental).** ይህ ከተሰቀለ ማይክሮስኮፕ ምስል 8ቱን መለኪያዎች "
-        "በምስል ማቀናበሪያ (image processing) ይገምታል፣ ከዚያም ሞዴሉ ከሰለጠነበት እሴት መጠን ጋር "
-        "እንዲመጣጠን በስታስቲክስ ያስተካክላል። ይህ ኦሪጅናል የክሊኒካል ዳታሴቱ የተሰራበት የተስተካከለ "
-        "ዘዴ አይደለም — ውጤቱን እንደ ግምታዊ የትምህርት ማሳያ ብቻ ይውሰዱት።\n\n"
-        "This is an experimental approximation, not a calibrated clinical "
-        "measurement — treat results as educational only."
-    )
-
-    uploaded_file = st.file_uploader(
-        "ማይክሮስኮፕ ምስል ይስቀሉ / Upload a microscopy image (JPG or PNG)",
-        type=["jpg", "jpeg", "png"],
-    )
-
-    if uploaded_file is not None:
-        file_bytes = np.frombuffer(uploaded_file.read(), np.uint8)
-        image_bgr = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-
-        if image_bgr is None:
-            st.error("ምስሉን ማንበብ አልተቻለም። እባክዎ የተለየ JPG/PNG ይሞክሩ።")
-        else:
-            with st.spinner("የሕዋስ ኒውክሊየሶችን በመለየት ላይ... / Detecting cell nuclei..."):
-                try:
-                    result, annotated_bgr, n_nuclei = extract_features_from_image(image_bgr)
-                    annotated_rgb = cv2.cvtColor(annotated_bgr, cv2.COLOR_BGR2RGB)
-
-                    st.image(
-                        annotated_rgb,
-                        caption=f"{n_nuclei} ኒውክሊየስ-መሰል ክፍሎች ተገኝተዋል / {n_nuclei} nucleus-like regions detected",
-                        use_container_width=True,
-                    )
-                    st.success("የተገመቱ መለኪያዎች ከታች ተሞልተዋል — ከመተንበይዎ በፊት ማስተካከል ይችላሉ።")
-                    st.session_state.prefill = result
-                except ValueError as e:
-                    st.warning(str(e))
-                    st.session_state.prefill = None
-                except Exception:
-                    st.error(
-                        "ይህን ምስል በመተንተን ላይ ችግር ተፈጥሯል። እባክዎ የተለየ ምስል ይሞክሩ ወይም "
-                        "ወደ በእጅ ማስገቢያ ይቀይሩ። / Something went wrong analyzing this "
-                        "image — try a different image or switch to Manual Entry."
-                    )
-                    st.session_state.prefill = None
-
-prefill = st.session_state.prefill
-
-# ----------------------------------------------------------------------
 # Input form
 # ----------------------------------------------------------------------
 st.markdown('<div class="section-label">📋 የዕጢ መለኪያዎች (Tumor Measurements)</div>', unsafe_allow_html=True)
@@ -483,11 +421,10 @@ with st.form("prediction_form"):
     for i, key in enumerate(key_features):
         am_label, en_label, desc, icon = FIELD_INFO.get(key, (key, key, "", "🔹"))
         col = columns[i % 2]
-        default_val = prefill[key] if prefill is not None else medians[key]
         with col:
             user_values[key] = st.number_input(
                 f"{icon} {am_label} ({en_label})",
-                value=float(default_val),
+                value=float(medians[key]),
                 help=desc,
                 format="%.4f",
             )
@@ -535,12 +472,6 @@ if submitted:
     c2.metric("🔴 የካንሰርነት እርግጠኝነት", f"{proba[1]*100:.1f}%")
 
     st.progress(float(proba[1]), text="የካንሰር አደጋ ደረጃ (Malignancy risk score)")
-
-    if prefill is not None:
-        st.caption(
-            "ℹ️ ይህ ትንበያ ከተሰቀለው ምስል የተገመቱ መለኪያዎችን ተጠቅሟል — የሙከራ ግምት እንጂ "
-            "የተስተካከለ ክሊኒካዊ መለኪያ አይደለም።"
-        )
 
     # --- PDF download ---
     pdf_buffer = generate_pdf_report(user_values, FIELD_INFO, pred, proba, accuracy, LOGO_PATH)
