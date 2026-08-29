@@ -1,17 +1,25 @@
 """
 Breast Cancer Prediction — Web App (Streamlit)
 ================================================
-Run with:  streamlit run breast_cancer_web_app.py
+Run with:  streamlit run app_en.py
 
 Loads the pre-trained model from breast_cancer_model.pkl (run
 train_and_save_model.py first if that file doesn't exist yet).
+
+Two input modes:
+  - Manual Entry: type the 8 key measurements directly
+  - Upload Image: estimate the 8 measurements from a microscopy image
+    using classical image processing (see image_features.py)
 """
 
 import streamlit as st
 import joblib
 import numpy as np
 import pandas as pd
+import cv2
 import os
+
+from image_features import extract_features_from_image
 
 MODEL_PATH = "breast_cancer_model.pkl"
 
@@ -51,17 +59,83 @@ accuracy = bundle["accuracy"]
 # ----------------------------------------------------------------------
 st.title("🩺 Breast Cancer Prediction")
 st.caption(f"Model accuracy on test data: **{accuracy*100:.2f}%**")
-st.write(
-    "Enter tumor measurements below and get an instant prediction of "
-    "**Malignant** or **Benign**. Fields are pre-filled with typical "
-    "dataset values — edit any of them with real measurements."
-)
 
 st.divider()
 
 # ----------------------------------------------------------------------
-# Input form
+# Input mode selector
 # ----------------------------------------------------------------------
+mode = st.radio(
+    "How would you like to provide measurements?",
+    ["✏️ Manual Entry", "📷 Upload Image (Beta)"],
+    horizontal=True,
+)
+
+if "prefill" not in st.session_state:
+    st.session_state.prefill = None
+
+# ----------------------------------------------------------------------
+# IMAGE MODE
+# ----------------------------------------------------------------------
+if mode == "📷 Upload Image (Beta)":
+    st.info(
+        "⚠️ **Experimental feature.** This estimates the 8 measurements from an "
+        "uploaded microscopy image using classical image processing (nucleus "
+        "detection + geometry), then statistically maps them onto the scale the "
+        "model was trained on. It is **not** the calibrated method used to build "
+        "the original clinical dataset — treat results as a rough, educational "
+        "approximation only, especially on images that aren't clear, high-contrast "
+        "microscopy shots of individually visible cell nuclei."
+    )
+
+    uploaded_file = st.file_uploader(
+        "Upload a microscopy / histopathology image (JPG or PNG)",
+        type=["jpg", "jpeg", "png"],
+    )
+
+    if uploaded_file is not None:
+        file_bytes = np.frombuffer(uploaded_file.read(), np.uint8)
+        image_bgr = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+
+        if image_bgr is None:
+            st.error("Couldn't read that image file. Please try a different JPG/PNG.")
+        else:
+            with st.spinner("Detecting cell nuclei and estimating measurements..."):
+                try:
+                    result, annotated_bgr, n_nuclei = extract_features_from_image(image_bgr)
+                    annotated_rgb = cv2.cvtColor(annotated_bgr, cv2.COLOR_BGR2RGB)
+
+                    st.image(
+                        annotated_rgb,
+                        caption=f"Detected {n_nuclei} nucleus-like region(s) (outlined in green)",
+                        use_container_width=True,
+                    )
+
+                    st.success(
+                        "Estimated measurements below — feel free to review and adjust "
+                        "them before predicting."
+                    )
+                    st.session_state.prefill = result
+                except ValueError as e:
+                    st.warning(str(e))
+                    st.session_state.prefill = None
+
+st.divider()
+
+# ----------------------------------------------------------------------
+# Input form (used for both modes — image mode pre-fills it)
+# ----------------------------------------------------------------------
+prefill = st.session_state.prefill
+
+if prefill is not None:
+    st.write("Review / adjust the estimated measurements, then predict:")
+else:
+    st.write(
+        "Enter tumor measurements below and get an instant prediction of "
+        "**Malignant** or **Benign**. Fields are pre-filled with typical "
+        "dataset values — edit any of them with real measurements."
+    )
+
 with st.form("prediction_form"):
     col1, col2 = st.columns(2)
     user_values = {}
@@ -70,10 +144,11 @@ with st.form("prediction_form"):
     for i, key in enumerate(key_features):
         label, desc = FIELD_INFO.get(key, (key, ""))
         col = columns[i % 2]
+        default_val = prefill[key] if prefill is not None else medians[key]
         with col:
             user_values[key] = st.number_input(
                 label,
-                value=float(medians[key]),
+                value=float(default_val),
                 help=desc,
                 format="%.4f",
             )
@@ -105,6 +180,13 @@ if submitted:
     c2.metric("Malignant confidence", f"{proba[1]*100:.1f}%")
 
     st.progress(float(proba[1]), text="Malignancy risk score")
+
+    if prefill is not None:
+        st.caption(
+            "ℹ️ This prediction used measurements estimated from your uploaded "
+            "image — an experimental approximation, not a calibrated clinical "
+            "measurement."
+        )
 
 st.divider()
 st.caption(
