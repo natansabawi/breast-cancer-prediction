@@ -156,11 +156,13 @@ def extract_features_from_image(image_bgr, min_nucleus_px=40, max_nucleus_frac=0
         n_defects = 0
         if hull_idx is not None and len(hull_idx) > 3:
             try:
-                defects = cv2.convexityDefects(contour, hull_idx)
+                hull_idx_sorted = np.sort(hull_idx.flatten())[:, None]
+                defects = cv2.convexityDefects(contour, hull_idx_sorted)
                 if defects is not None:
+                    defects = np.asarray(defects).reshape(-1, 4)
                     depth_thresh = 0.02 * radius_px * 256  # scaled depth units used by OpenCV
-                    n_defects = int(np.sum(defects[:, 0, 3] > depth_thresh))
-            except cv2.error:
+                    n_defects = int(np.sum(defects[:, 3] > depth_thresh))
+            except (cv2.error, IndexError, ValueError):
                 n_defects = 0
 
         radii.append(radius_px)
